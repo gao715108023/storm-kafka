@@ -13,7 +13,7 @@ public class StaticCoordinator implements PartitionCoordinator {
 
     Map<GlobalPartitionId, PartitionManager> managers = new HashMap<GlobalPartitionId, PartitionManager>();
 
-    private List<PartitionManager> allManagers;
+    private List<PartitionManager> allManagers = new ArrayList();
 
 
     /**

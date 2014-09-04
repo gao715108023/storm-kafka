@@ -26,6 +26,13 @@ import java.util.*;
 public class PartitionManager {
 
     private static final Logger LOG = LoggerFactory.getLogger(PartitionManager.class);
+    private final CombinedMetric fetchAPILatencyMax;
+
+    private final ReducedMetric fetchAPILatencyMean;
+
+    private final CountMetric fetchAPICallCount;
+
+    private final CountMetric fetchAPIMessageCount;
 
     private DynamicPartitionConnections connections;
 
@@ -49,13 +56,6 @@ public class PartitionManager {
     //Kafka的消费者
     private SimpleConsumer consumer;
 
-    private final CombinedMetric fetchAPILatencyMax;
-
-    private final ReducedMetric fetchAPILatencyMean;
-
-    private final CountMetric fetchAPICallCount;
-
-    private final CountMetric fetchAPIMessageCount;
 
     /**
      * 构造函数
@@ -68,12 +68,13 @@ public class PartitionManager {
      * @param id                 partition id
      */
     public PartitionManager(DynamicPartitionConnections connections, String topologyInstanceId, ZkState state, Map stormConf, SpoutConfig spoutConfig, GlobalPartitionId id) {
+        this.partition = id;
         this.connections = connections;
+        this.spoutConfig = spoutConfig;
         this.topologyInstanceId = topologyInstanceId;
         this.state = state;
         this.stormConf = stormConf;
-        this.spoutConfig = spoutConfig;
-        this.partition = id;
+
 
         //注册该分区
         consumer = connections.register(id.getHost(), id.getPartition());
@@ -89,14 +90,15 @@ public class PartitionManager {
         }
 
         //获取当前offset值
-        if (topologyInstanceId.equals(jsonTopologyId) && spoutConfig.isForceFromStart()) {
+        if (!topologyInstanceId.equals(jsonTopologyId) && spoutConfig.isForceFromStart()) {
             committedTo = consumer.getOffsetsBefore(spoutConfig.getTopic(), id.getPartition(), spoutConfig.getStartOffsetTime(), 1)[0];
-            LOG.info("Setting last commit offset to HEAD.");
+            LOG.info("Using startOffsetTime to choose last commit offset.");
         } else if (jsonTopologyId == null || jsonOffset == null) {
             committedTo = consumer.getOffsetsBefore(spoutConfig.getTopic(), id.getPartition(), -1, 1)[0];
+            LOG.info("Setting last commit offset to HEAD.");
         } else {
             committedTo = jsonOffset;
-            LOG.info("Read last commit offset to HEAD.");
+            LOG.info("Read last commit offset from zookeeper: " + committedTo);
         }
 
         LOG.info("Starting Kafka " + consumer.host() + ":" + id.getPartition() + " from offset " + committedTo);
@@ -142,6 +144,46 @@ public class PartitionManager {
         }
     }
 
+
+    private void fill() {
+        long start = System.nanoTime();
+        ByteBufferMessageSet msgs = consumer.fetch(new FetchRequest(spoutConfig.getTopic(), partition.getPartition(), emittedToOffset, spoutConfig.getFetchSizeBytes()));
+        long end = System.nanoTime();
+        long millis = (end - start) / 1000000;
+        fetchAPILatencyMax.update(millis);
+        fetchAPILatencyMean.update(millis);
+        fetchAPICallCount.incr();
+        fetchAPIMessageCount.incrBy(msgs.underlying().size());
+
+        int numMessages = msgs.underlying().size();
+        if (numMessages > 0) {
+            LOG.info("Fetched " + numMessages + " messages from Kafka: " + consumer.host() + ":" + partition.getPartition());
+        }
+
+        for (MessageAndOffset msg : msgs) {
+            pending.add(emittedToOffset);
+            waitingToEmit.add(new MessageAndRealOffset(msg.message(), emittedToOffset));
+            emittedToOffset = msg.offset();
+        }
+        if (numMessages > 0) {
+            LOG.info("Added " + numMessages + " message from Kafka: " + consumer.host() + ":" + partition.getPartition() + " to internal buffers");
+        }
+    }
+
+    public void ack(Long offset) {
+        pending.remove(offset);
+    }
+
+    public void fail(Long offset) {
+//TODO: should it use in-memory ack set to skip anything that's been acked but not committed???
+        // things might get crazy with lots of timeouts
+        if (emittedToOffset > offset) {
+            emittedToOffset = offset;
+            pending.tailSet(offset).clear();
+        }
+    }
+
+
     public void commit() {
         LOG.info("Committing offset for " + partition);
         long committedTo;
@@ -169,42 +211,6 @@ public class PartitionManager {
         LOG.info("Committed offset " + committedTo + " for " + partition);
     }
 
-    public void fail(Long offset) {
-        if (emittedToOffset > offset) {
-            emittedToOffset = offset;
-            pending.tailSet(offset).clear();
-        }
-    }
-
-    private void fill() {
-        long start = System.nanoTime();
-        ByteBufferMessageSet msgs = consumer.fetch(new FetchRequest(spoutConfig.getTopic(), partition.getPartition(), emittedToOffset, spoutConfig.getFetchSizeBytes()));
-        long end = System.nanoTime();
-        long millis = (end - start) / 1000000;
-        fetchAPILatencyMax.update(millis);
-        fetchAPILatencyMean.update(millis);
-        fetchAPICallCount.incr();
-        fetchAPIMessageCount.incrBy(msgs.underlying().size());
-
-        int numMessages = msgs.underlying().size();
-        if (numMessages > 0) {
-            LOG.info("Fetched " + numMessages + " messages from Kafka: " + consumer.host() + ":" + partition.getPartition());
-        }
-
-        for (MessageAndOffset msg : msgs) {
-            pending.add(emittedToOffset);
-            waitingToEmit.add(new MessageAndRealOffset(msg.message(), emittedToOffset));
-            emittedToOffset = msg.offset();
-        }
-        if (numMessages > 0) {
-            LOG.info("Added " + numMessages + " message from Kafka: " + consumer.host() + ":" + partition.getPartition() + " to internal buffers");
-        }
-    }
-
-    private void ack(Long offset) {
-        pending.remove(offset);
-    }
-
     /**
      * Zookeeper的地址，存储格式为root/topology名称/partition id
      *
@@ -212,6 +218,14 @@ public class PartitionManager {
      */
     private String committedPath() {
         return spoutConfig.getZkRoot() + "/" + spoutConfig.getId() + "/" + partition;
+    }
+
+    public long lastCommittedOffset() {
+        return committedTo;
+    }
+
+    public GlobalPartitionId getPartition() {
+        return partition;
     }
 
     /**
@@ -222,11 +236,4 @@ public class PartitionManager {
     }
 
 
-    public GlobalPartitionId getPartition() {
-        return partition;
-    }
-
-    public long lastCommittedOffset() {
-        return committedTo;
-    }
 }

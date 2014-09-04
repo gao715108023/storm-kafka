@@ -6,9 +6,7 @@ import backtype.storm.spout.SpoutOutputCollector;
 import backtype.storm.task.TopologyContext;
 import backtype.storm.topology.OutputFieldsDeclarer;
 import backtype.storm.topology.base.BaseRichSpout;
-import backtype.storm.tuple.Fields;
-import com.vip.fds.storm.Field;
-import com.vip.fds.storm.kafka.trident.KafkaOffsetMetric;
+import storm.kafka.trident.KafkaOffsetMetric;
 
 import java.util.*;
 
@@ -42,8 +40,8 @@ public class KafkaSpout extends BaseRichSpout {
 
     @Override
     public void declareOutputFields(OutputFieldsDeclarer declarer) {
-        //declarer.declare(spoutConfig.getScheme().getOutputFields());
-        declarer.declare(new Fields(Field.KAFKASPOUTFIELD));
+        declarer.declare(spoutConfig.getScheme().getOutputFields());
+        //declarer.declare(new Fields(Field.KAFKASPOUTFIELD));
     }
 
     @Override
@@ -72,10 +70,10 @@ public class KafkaSpout extends BaseRichSpout {
 
         connections = new DynamicPartitionConnections(spoutConfig);
 
-        // 获取所有的task数目
+        //从context对象获取spout大小
         int totalTasks = context.getComponentTasks(context.getThisComponentId()).size();
 
-        if (spoutConfig.getHosts() instanceof StaticHosts) { //如果实例化为StaticHosts
+        if (spoutConfig.getHosts() instanceof StaticHosts) { //如果实例化为StaticHosts，context.getThisTaskIndex()——从这个spout得到任务id
             coordinator = new StaticCoordinator(connections, conf, spoutConfig, zkState, context.getThisTaskIndex(), totalTasks, uuid);
         } else { //1. 如果实例化为 ZkHosts
             // 2. 获取该task的index
@@ -116,6 +114,7 @@ public class KafkaSpout extends BaseRichSpout {
         }, 60);
     }
 
+
     @Override
     public void nextTuple() {
         List<PartitionManager> managers = coordinator.getMyManagedPartitions();
@@ -148,13 +147,13 @@ public class KafkaSpout extends BaseRichSpout {
         KafkaMessageId id = (KafkaMessageId) msgId;
         PartitionManager m = coordinator.getManager(id.getPartition());
         if (m != null) {
-            m.fail(id.getOffset());
+            m.ack(id.getOffset());
         }
     }
 
     @Override
-    public void fail(Object magId) {
-        KafkaMessageId id = (KafkaMessageId) magId;
+    public void fail(Object msgId) {
+        KafkaMessageId id = (KafkaMessageId) msgId;
         PartitionManager m = coordinator.getManager(id.getPartition());
 
         if (m != null) {

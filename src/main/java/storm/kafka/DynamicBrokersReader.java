@@ -40,7 +40,7 @@ public class DynamicBrokersReader {
             curator = CuratorFrameworkFactory.newClient(zkStr, Utils.getInt(conf.get(Config.STORM_ZOOKEEPER_CONNECTION_TIMEOUT)), 15000, new RetryNTimes(Utils.getInt(conf.get(Config.STORM_ZOOKEEPER_RETRY_TIMES)), Utils.getInt(conf.get(Config.STORM_ZOOKEEPER_RETRY_INTERVAL))));
             curator.start();//启动Zookeeper的Client
         } catch (IOException e) {
-            e.printStackTrace();
+            throw new RuntimeException(e);
         }
     }
 
@@ -114,7 +114,7 @@ public class DynamicBrokersReader {
         try {
             return Integer.parseInt(new String(contents, "UTF-8"));
         } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException();
+            throw new RuntimeException(e);
         }
     }
 }

@@ -26,7 +26,25 @@ public class ZkState {
 
     private CuratorFramework curator;
 
+    /**
+     * 创建Zookeeper游标
+     *
+     * @param stateConf
+     * @return
+     * @throws java.io.IOException
+     */
+    private CuratorFramework newCurator(Map stateConf) throws IOException {
+        Integer port = (Integer) stateConf.get(Config.TRANSACTIONAL_ZOOKEEPER_PORT);
+        String serverPorts = "";
+        for (String server : (List<String>) stateConf.get(Config.TRANSACTIONAL_ZOOKEEPER_SERVERS)) {
+            serverPorts = serverPorts + server + ":" + port + ",";
+        }
+        LOG.info("Zookeeper Address for Spout to store offset: " + serverPorts);
+        return CuratorFrameworkFactory.newClient(serverPorts, Utils.getInt(stateConf.get(Config.STORM_ZOOKEEPER_SESSION_TIMEOUT)), 15000, new RetryNTimes(Utils.getInt(stateConf.get(Config.STORM_ZOOKEEPER_RETRY_TIMES)), Utils.getInt(stateConf.get(Config.STORM_ZOOKEEPER_RETRY_INTERVAL))));
+    }
+
     public CuratorFramework getCurator() {
+        assert curator != null;
         return curator;
     }
 
@@ -46,22 +64,6 @@ public class ZkState {
         }
     }
 
-    /**
-     * 创建Zookeeper游标
-     *
-     * @param stateConf
-     * @return
-     * @throws java.io.IOException
-     */
-    private CuratorFramework newCurator(Map stateConf) throws IOException {
-        Integer port = (Integer) stateConf.get(Config.TRANSACTIONAL_ZOOKEEPER_PORT);
-        String serverPorts = "";
-        for (String server : (List<String>) stateConf.get(Config.TRANSACTIONAL_ZOOKEEPER_SERVERS)) {
-            serverPorts = serverPorts + server + ":" + port + ",";
-        }
-        LOG.info("Zookeeper Address for Spout to store offset: " + serverPorts);
-        return CuratorFrameworkFactory.newClient(serverPorts, Utils.getInt(stateConf.get(Config.STORM_ZOOKEEPER_SESSION_TIMEOUT)), 15000, new RetryNTimes(Utils.getInt(stateConf.get(Config.STORM_ZOOKEEPER_RETRY_TIMES)), Utils.getInt(stateConf.get(Config.STORM_ZOOKEEPER_RETRY_INTERVAL))));
-    }
 
     public void writeJSON(String path, Map<Object, Object> data) {
         LOG.info("Writing " + path + " the data " + data.toString());
@@ -77,7 +79,7 @@ public class ZkState {
                 curator.setData().forPath(path, bytes);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new RuntimeException(e);
         }
     }
 
@@ -87,7 +89,7 @@ public class ZkState {
      * @param path zookeeper的路径
      * @return
      */
-    public Map<Object, Object> readJson(String path) {
+    public Map<Object, Object> readJSON(String path) {
         byte[] b = readBytes(path);
         if (b == null)
             return null;

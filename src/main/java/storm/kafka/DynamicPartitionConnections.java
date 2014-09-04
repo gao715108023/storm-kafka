@@ -64,7 +64,7 @@ public class DynamicPartitionConnections {
     public SimpleConsumer getConnection(GlobalPartitionId id) {
         ConnectionInfo info = connections.get(id.getHost());
         if (info != null)
-            info.getConsumer();
+            return info.getConsumer();
         return null;
     }
 

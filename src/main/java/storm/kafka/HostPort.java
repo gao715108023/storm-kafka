@@ -38,6 +38,17 @@ public class HostPort implements Serializable {
     }
 
     @Override
+    public boolean equals(Object o) {
+        HostPort other = (HostPort) o;
+        return host.equals(other.host) && port == other.port;
+    }
+
+    @Override
+    public int hashCode() {
+        return host.hashCode();
+    }
+
+    @Override
     public String toString() {
         return host + ":" + port;
     }
